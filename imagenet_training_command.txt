@@ -1,0 +1,2 @@
+2021.05.03
+python train.py --outdir=./training-runs --data=/SSD/Multi-class-StyleGAN/ImageNet-10K-128x128 --gpus=4 --cfg=auto --aug=ada --metrics=fid5k --kimg=5000 --cond=True
