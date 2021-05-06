@@ -3,7 +3,7 @@ from glob import glob
 import json
 
 
-root_path = "/SSD/Multi-class-StyleGAN/ImageNet-10K-128x128"  # 디렉토리 시작은 /, 디렉토리 끝은 아무것도 없는것으로 지정해줘야함
+root_path = "/SSD/ILSVRC_2012_ImageFolder/train"  # 디렉토리 시작은 /, 디렉토리 끝은 아무것도 없는것으로 지정해줘야함
 
 labels = os.listdir(root_path)
 print(labels)

@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -330,6 +330,7 @@ class SynthesisBlock(torch.nn.Module):
     def __init__(self,
         in_channels,                        # Number of input channels, 0 = first block.
         out_channels,                       # Number of output channels.
+        c_dim,                      # Conditioning label (C) dimensionality.
         w_dim,                              # Intermediate latent (W) dimensionality.
         resolution,                         # Resolution of this block.
         img_channels,                       # Number of output color channels.
@@ -344,6 +345,8 @@ class SynthesisBlock(torch.nn.Module):
         assert architecture in ['orig', 'skip', 'resnet']
         super().__init__()
         self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.c_dim = c_dim
         self.w_dim = w_dim
         self.resolution = resolution
         self.img_channels = img_channels
@@ -356,7 +359,9 @@ class SynthesisBlock(torch.nn.Module):
         self.num_torgb = 0
 
         if in_channels == 0:
-            self.const = torch.nn.Parameter(torch.randn([out_channels, resolution, resolution]))
+            # self.const = torch.nn.Parameter(torch.randn([out_channels, resolution, resolution]))
+            if c_dim > 0:
+                self.embed = FullyConnectedLayer(c_dim, out_channels*resolution*resolution)
 
         if in_channels != 0:
             self.conv0 = SynthesisLayer(in_channels, out_channels, w_dim=w_dim, resolution=resolution, up=2,
@@ -376,7 +381,7 @@ class SynthesisBlock(torch.nn.Module):
             self.skip = Conv2dLayer(in_channels, out_channels, kernel_size=1, bias=False, up=2,
                 resample_filter=resample_filter, channels_last=self.channels_last)
 
-    def forward(self, x, img, ws, force_fp32=False, fused_modconv=None, **layer_kwargs):
+    def forward(self, c, x, img, ws, force_fp32=False, fused_modconv=None, **layer_kwargs):
         misc.assert_shape(ws, [None, self.num_conv + self.num_torgb, self.w_dim])
         w_iter = iter(ws.unbind(dim=1))
         dtype = torch.float16 if self.use_fp16 and not force_fp32 else torch.float32
@@ -387,8 +392,12 @@ class SynthesisBlock(torch.nn.Module):
 
         # Input.
         if self.in_channels == 0:
-            x = self.const.to(dtype=dtype, memory_format=memory_format)
-            x = x.unsqueeze(0).repeat([ws.shape[0], 1, 1, 1])
+            if self.c_dim > 0:
+                misc.assert_shape(c, [None, self.c_dim])
+                x = normalize_2nd_moment(self.embed(c.to(torch.float32)))
+                x = torch.reshape(x, (-1, self.out_channels, self.resolution, self.resolution))
+            # x = self.const.to(dtype=dtype, memory_format=memory_format)
+            # x = x.unsqueeze(0).repeat([ws.shape[0], 1, 1, 1])
         else:
             misc.assert_shape(x, [None, self.in_channels, self.resolution // 2, self.resolution // 2])
             x = x.to(dtype=dtype, memory_format=memory_format)
@@ -423,6 +432,7 @@ class SynthesisBlock(torch.nn.Module):
 @persistence.persistent_class
 class SynthesisNetwork(torch.nn.Module):
     def __init__(self,
+        c_dim,                      # Conditioning label (C) dimensionality.
         w_dim,                      # Intermediate latent (W) dimensionality.
         img_resolution,             # Output image resolution.
         img_channels,               # Number of color channels.
@@ -433,6 +443,7 @@ class SynthesisNetwork(torch.nn.Module):
     ):
         assert img_resolution >= 4 and img_resolution & (img_resolution - 1) == 0
         super().__init__()
+        self.c_dim = c_dim
         self.w_dim = w_dim
         self.img_resolution = img_resolution
         self.img_resolution_log2 = int(np.log2(img_resolution))
@@ -447,14 +458,14 @@ class SynthesisNetwork(torch.nn.Module):
             out_channels = channels_dict[res]
             use_fp16 = (res >= fp16_resolution)
             is_last = (res == self.img_resolution)
-            block = SynthesisBlock(in_channels, out_channels, w_dim=w_dim, resolution=res,
+            block = SynthesisBlock(in_channels, out_channels, c_dim=c_dim, w_dim=w_dim, resolution=res,
                 img_channels=img_channels, is_last=is_last, use_fp16=use_fp16, **block_kwargs)
             self.num_ws += block.num_conv
             if is_last:
                 self.num_ws += block.num_torgb
             setattr(self, f'b{res}', block)
 
-    def forward(self, ws, **block_kwargs):
+    def forward(self, c, ws, **block_kwargs):
         block_ws = []
         with torch.autograd.profiler.record_function('split_ws'):
             misc.assert_shape(ws, [None, self.num_ws, self.w_dim])
@@ -468,7 +479,7 @@ class SynthesisNetwork(torch.nn.Module):
         x = img = None
         for res, cur_ws in zip(self.block_resolutions, block_ws):
             block = getattr(self, f'b{res}')
-            x, img = block(x, img, cur_ws, **block_kwargs)
+            x, img = block(c, x, img, cur_ws, **block_kwargs)
         return img
 
 #----------------------------------------------------------------------------
@@ -490,13 +501,13 @@ class Generator(torch.nn.Module):
         self.w_dim = w_dim
         self.img_resolution = img_resolution
         self.img_channels = img_channels
-        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=img_resolution, img_channels=img_channels, **synthesis_kwargs)
+        self.synthesis = SynthesisNetwork(c_dim=c_dim, w_dim=w_dim, img_resolution=img_resolution, img_channels=img_channels, **synthesis_kwargs)
         self.num_ws = self.synthesis.num_ws
         self.mapping = MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
         ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
-        img = self.synthesis(ws, **synthesis_kwargs)
+        img = self.synthesis(c, ws, **synthesis_kwargs)
         return img
 
 #----------------------------------------------------------------------------
