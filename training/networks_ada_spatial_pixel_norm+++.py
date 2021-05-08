@@ -311,11 +311,11 @@ class SpatialModulationNetwork(torch.nn.Module):
                 in_channels = int(int(w_dim / (dimensions * dimensions)) / (2**int((idx+1)/2)))
                 out_channels = in_channels
                 mod_channels = 1
-                layer = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=False, activation=activation, up=1)
+                layer = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=True, activation=activation, up=1)
                 setattr(self, f'conv{idx}', layer)
-                scale_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
+                scale_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation='linear', up=1)
                 setattr(self, f'scale_mod{idx}', scale_mod_layer)
-                bias_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
+                bias_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation='linear', up=1)
                 setattr(self, f'bias_mod{idx}', bias_mod_layer)
             # Upsampling before convolution.
             elif idx % 2 == 0:
@@ -323,11 +323,11 @@ class SpatialModulationNetwork(torch.nn.Module):
                 in_channels = int(int(w_dim / (dimensions * dimensions)) / (2**int((idx+1)/2)))
                 out_channels = int(in_channels / 2)
                 mod_channels = 1
-                layer = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=False, activation=activation, up=2)
+                layer = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=True, activation=activation, up=2)
                 setattr(self, f'conv{idx}', layer)
-                scale_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
+                scale_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation='linear', up=1)
                 setattr(self, f'scale_mod{idx}', scale_mod_layer)
-                bias_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
+                bias_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation='linear', up=1)
                 setattr(self, f'bias_mod{idx}', bias_mod_layer)
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
