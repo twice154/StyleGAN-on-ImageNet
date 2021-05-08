@@ -21,9 +21,10 @@ class Loss:
 #----------------------------------------------------------------------------
 
 class StyleGAN2Loss(Loss):
-    def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2):
+    def __init__(self, device, G_spatial, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2):
         super().__init__()
         self.device = device
+        self.G_spatial = G_spatial
         self.G_mapping = G_mapping
         self.G_synthesis = G_synthesis
         self.D = D
@@ -36,16 +37,18 @@ class StyleGAN2Loss(Loss):
         self.pl_mean = torch.zeros([], device=device)
 
     def run_G(self, z, c, sync):
+        with misc.ddp_sync(self.G_spatial, sync):
+            sp_ws = self.G_spatial(z, c)
         with misc.ddp_sync(self.G_mapping, sync):
             ws = self.G_mapping(z, c)
-            if self.style_mixing_prob > 0:
-                with torch.autograd.profiler.record_function('style_mixing'):
-                    cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
-                    cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
-                    ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
+            # if self.style_mixing_prob > 0:
+            #     with torch.autograd.profiler.record_function('style_mixing'):
+            #         cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
+            #         cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
+            #         ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
         with misc.ddp_sync(self.G_synthesis, sync):
-            img = self.G_synthesis(ws)
-        return img, ws
+            img = self.G_synthesis(c, ws, sp_ws)
+        return img, ws, sp_ws
 
     def run_D(self, img, c, sync):
         if self.augment_pipe is not None:
@@ -64,7 +67,7 @@ class StyleGAN2Loss(Loss):
         # Gmain: Maximize logits for generated images.
         if do_Gmain:
             with torch.autograd.profiler.record_function('Gmain_forward'):
-                gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl)) # May get synced by Gpl.
+                gen_img, _gen_ws, _gen_sp_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl)) # May get synced by Gpl.
                 gen_logits = self.run_D(gen_img, gen_c, sync=False)
                 training_stats.report('Loss/scores/fake', gen_logits)
                 training_stats.report('Loss/signs/fake', gen_logits.sign())
@@ -74,28 +77,28 @@ class StyleGAN2Loss(Loss):
                 loss_Gmain.mean().mul(gain).backward()
 
         # Gpl: Apply path length regularization.
-        if do_Gpl:
-            with torch.autograd.profiler.record_function('Gpl_forward'):
-                batch_size = gen_z.shape[0] // self.pl_batch_shrink
-                gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size], sync=sync)
-                pl_noise = torch.randn_like(gen_img) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
-                with torch.autograd.profiler.record_function('pl_grads'), conv2d_gradfix.no_weight_gradients():
-                    pl_grads = torch.autograd.grad(outputs=[(gen_img * pl_noise).sum()], inputs=[gen_ws], create_graph=True, only_inputs=True)[0]
-                pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
-                pl_mean = self.pl_mean.lerp(pl_lengths.mean(), self.pl_decay)
-                self.pl_mean.copy_(pl_mean.detach())
-                pl_penalty = (pl_lengths - pl_mean).square()
-                training_stats.report('Loss/pl_penalty', pl_penalty)
-                loss_Gpl = pl_penalty * self.pl_weight
-                training_stats.report('Loss/G/reg', loss_Gpl)
-            with torch.autograd.profiler.record_function('Gpl_backward'):
-                (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean().mul(gain).backward()
+        # if do_Gpl:
+        #     with torch.autograd.profiler.record_function('Gpl_forward'):
+        #         batch_size = gen_z.shape[0] // self.pl_batch_shrink
+        #         gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size], sync=sync)
+        #         pl_noise = torch.randn_like(gen_img) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+        #         with torch.autograd.profiler.record_function('pl_grads'), conv2d_gradfix.no_weight_gradients():
+        #             pl_grads = torch.autograd.grad(outputs=[(gen_img * pl_noise).sum()], inputs=[gen_ws], create_graph=True, only_inputs=True)[0]
+        #         pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
+        #         pl_mean = self.pl_mean.lerp(pl_lengths.mean(), self.pl_decay)
+        #         self.pl_mean.copy_(pl_mean.detach())
+        #         pl_penalty = (pl_lengths - pl_mean).square()
+        #         training_stats.report('Loss/pl_penalty', pl_penalty)
+        #         loss_Gpl = pl_penalty * self.pl_weight
+        #         training_stats.report('Loss/G/reg', loss_Gpl)
+        #     with torch.autograd.profiler.record_function('Gpl_backward'):
+        #         (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean().mul(gain).backward()
 
         # Dmain: Minimize logits for generated images.
         loss_Dgen = 0
         if do_Dmain:
             with torch.autograd.profiler.record_function('Dgen_forward'):
-                gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=False)
+                gen_img, _gen_ws, _gen_sp_ws = self.run_G(gen_z, gen_c, sync=False)
                 gen_logits = self.run_D(gen_img, gen_c, sync=False) # Gets synced by loss_Dreal.
                 training_stats.report('Loss/scores/fake', gen_logits)
                 training_stats.report('Loss/signs/fake', gen_logits.sign())

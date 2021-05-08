@@ -313,8 +313,10 @@ class SpatialModulationNetwork(torch.nn.Module):
                 mod_channels = 1
                 layer = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=False, activation=activation, up=1)
                 setattr(self, f'conv{idx}', layer)
-                mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
-                setattr(self, f'mod{idx}', mod_layer)
+                scale_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
+                setattr(self, f'scale_mod{idx}', scale_mod_layer)
+                bias_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
+                setattr(self, f'bias_mod{idx}', bias_mod_layer)
             # Upsampling before convolution.
             elif idx % 2 == 0:
                 dimensions = block_resolutions[0]
@@ -323,8 +325,10 @@ class SpatialModulationNetwork(torch.nn.Module):
                 mod_channels = 1
                 layer = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=False, activation=activation, up=2)
                 setattr(self, f'conv{idx}', layer)
-                mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
-                setattr(self, f'mod{idx}', mod_layer)
+                scale_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
+                setattr(self, f'scale_mod{idx}', scale_mod_layer)
+                bias_mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=False, activation='linear', up=1)
+                setattr(self, f'bias_mod{idx}', bias_mod_layer)
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
         # Embed, normalize, and concat inputs.
@@ -372,8 +376,10 @@ class SpatialModulationNetwork(torch.nn.Module):
         for idx in range(0, (len(self.block_resolutions)-1)*2):
             layer = getattr(self, f'conv{idx}')
             x = layer(x)
-            mod_layer = getattr(self, f'mod{idx}')
-            out.append(mod_layer(x))
+            scale_mod_layer = getattr(self, f'scale_mod{idx}')
+            out.append(scale_mod_layer(x))
+            bias_mod_layer = getattr(self, f'bias_mod{idx}')
+            out.append(bias_mod_layer(x))
 
         return out
 
@@ -510,7 +516,7 @@ class SynthesisBlock(torch.nn.Module):
             self.skip = Conv2dLayer(in_channels, out_channels, kernel_size=1, bias=False, up=2,
                 resample_filter=resample_filter, channels_last=self.channels_last)
 
-    def forward(self, c, x, img, ws, sp_ws1, sp_ws2, force_fp32=False, fused_modconv=None, **layer_kwargs):
+    def forward(self, c, x, img, ws, scale_sp_ws1, bias_sp_ws1, scale_sp_ws2, bias_sp_ws2, force_fp32=False, fused_modconv=None, **layer_kwargs):
         misc.assert_shape(ws, [None, self.num_conv + self.num_torgb, self.w_dim])
         w_iter = iter(ws.unbind(dim=1))
         dtype = torch.float16 if self.use_fp16 and not force_fp32 else torch.float32
@@ -541,9 +547,15 @@ class SynthesisBlock(torch.nn.Module):
             x = y.add_(x)
         else:
             x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            x = x * sp_ws1
+            # Pixelwise normalization.
+            x = ((x - torch.mean(x, dim=1, keepdim=True)) / torch.std(x, dim=1, keepdim=True))
+            # Adaptive re-scaling & re-biasing.
+            x = x * scale_sp_ws1 + bias_sp_ws1
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            x = x * sp_ws2
+            # Pixelwise normalization.
+            x = ((x - torch.mean(x, dim=1, keepdim=True)) / torch.std(x, dim=1, keepdim=True))
+            # Adaptive re-scaling & re-biasing.
+            x = x * scale_sp_ws2 + bias_sp_ws2
 
         # ToRGB.
         if img is not None:
@@ -611,9 +623,9 @@ class SynthesisNetwork(torch.nn.Module):
         for idx, (res, cur_ws) in enumerate(zip(self.block_resolutions, block_ws)):
             block = getattr(self, f'b{res}')
             if idx == 0:
-                x, img = block(c, x, img, cur_ws, None, None, **block_kwargs)
+                x, img = block(c, x, img, cur_ws, None, None, None, None, **block_kwargs)
             else:
-                x, img = block(c, x, img, cur_ws, sp_ws[(2*idx)-2], sp_ws[(2*idx)-1], **block_kwargs)
+                x, img = block(c, x, img, cur_ws, sp_ws[(4*idx)-4], sp_ws[(4*idx)-3], sp_ws[(4*idx)-2], sp_ws[(4*idx)-1], **block_kwargs)
         return img
 
 #----------------------------------------------------------------------------
