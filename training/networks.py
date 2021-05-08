@@ -550,12 +550,12 @@ class SynthesisBlock(torch.nn.Module):
             # Pixelwise normalization.
             x = ((x - torch.mean(x, dim=1, keepdim=True)) / torch.std(x, dim=1, keepdim=True))
             # Adaptive re-scaling & re-biasing.
-            x = x * scale_sp_ws1 + bias_sp_ws1
+            x = x * (1 + scale_sp_ws1) + bias_sp_ws1
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
             # Pixelwise normalization.
             x = ((x - torch.mean(x, dim=1, keepdim=True)) / torch.std(x, dim=1, keepdim=True))
             # Adaptive re-scaling & re-biasing.
-            x = x * scale_sp_ws2 + bias_sp_ws2
+            x = x * (1 + scale_sp_ws2) + bias_sp_ws2
 
         # ToRGB.
         if img is not None:
