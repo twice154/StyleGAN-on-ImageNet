@@ -17,3 +17,11 @@ python train.py --outdir=./training-runs --data=/SSD/Multi-class-StyleGAN/ImageN
 python multi_class_label_maker.py  (/SSD/ILSVRC_2012_ImageFolder/train)
 python dataset_tool.py --source=/SSD/ILSVRC_2012_ImageFolder/train --dest=/SSD/ImageNet-128x128 --transform=center-crop --width=128 --height=128
 python train.py --outdir=./training-runs --data=/SSD/ImageNet-128x128 --gpus=8 --cfg=auto --aug=noaug --metrics=fid50k --kimg=100000 --cond=True --fp32=True
+
+2021.05.11 on LSUNCAT-10K-256x256
+python dataset_tool.py --source=/SSD/Multi-class-StyleGAN/cat_lmdb --dest=/SSD/Multi-class-StyleGAN/LSUNCAT-10K-256x256 --transform=center-crop --width=256 --height=256 --max-images=10000
+python train.py --outdir=./training-runs --data=/SSD/Multi-class-StyleGAN/LSUNCAT-10K-256x256 --gpus=4 --cfg=auto --aug=ada --metrics=fid50k_full --kimg=5000 --fp32=True
+
+2021.05.13 on LSUNCAT-10K-256x256
+python dataset_tool.py --source=/SSD/Multi-class-StyleGAN/cat_lmdb --dest=/SSD/Multi-class-StyleGAN/LSUNCAT-10K-256x256 --transform=center-crop --width=256 --height=256 --max-images=10000
+python train.py --outdir=./training-runs --data=/SSD/Multi-class-StyleGAN/LSUNCAT-10K-256x256 --gpus=4 --cfg=auto --aug=ada --metrics=fid50k_full --kimg=5000 --fp32=True --batch=32
