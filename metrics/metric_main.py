@@ -157,3 +157,13 @@ def fid5k(opts):
     opts.dataset_kwargs.update(max_size=None)
     fid = frechet_inception_distance.compute_fid(opts, max_real=5000, num_gen=5000)
     return dict(fid5k=fid)
+
+@register_metric
+def fid5k_intra10(opts):
+    opts.dataset_kwargs.update(max_size=None)
+    dict_for_fid5k_cond10 = dict()
+    for i in range(10):
+        fid = frechet_inception_distance.compute_fid(opts, max_real=5000, num_gen=5000, label=i)
+        fid_name = "fid5k_label" + str(i)
+        dict_for_fid5k_cond10[fid_name] = fid
+    return dict_for_fid5k_cond10

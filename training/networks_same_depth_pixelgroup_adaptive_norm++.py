@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -251,6 +251,132 @@ class MappingNetwork(torch.nn.Module):
 #----------------------------------------------------------------------------
 
 @persistence.persistent_class
+class SpatialModulationNetwork(torch.nn.Module):
+    def __init__(self,
+        channel_base,               # Overall multiplier for the number of channels.
+        channel_max,                # Maximum number of channels in any layer.
+        z_dim,                      # Input latent (Z) dimensionality, 0 = no latent.
+        c_dim,                      # Conditioning label (C) dimensionality, 0 = no label.
+        w_dim,                      # Intermediate latent (W) dimensionality.
+        num_ws,                     # Number of intermediate latents to output, None = do not broadcast.
+        block_resolutions,          # Output block resolutions.
+        num_layers      = 8,        # Number of mapping layers.
+        embed_features  = None,     # Label embedding dimensionality, None = same as w_dim.
+        layer_features  = None,     # Number of intermediate features in the mapping layers, None = same as w_dim.
+        activation      = 'lrelu',  # Activation function: 'relu', 'lrelu', etc.
+        lr_multiplier   = 0.01,     # Learning rate multiplier for the mapping layers.
+        w_avg_beta      = 0.995,    # Decay for tracking the moving average of W during training, None = do not track.
+    ):
+        super().__init__()
+        self.z_dim = z_dim
+        self.c_dim = c_dim
+        self.w_dim = w_dim
+        self.num_ws = num_ws
+        self.block_resolutions = block_resolutions
+        self.num_layers = num_layers
+        self.w_avg_beta = w_avg_beta
+        channels_dict = {res: min(channel_base // res, channel_max) for res in self.block_resolutions}
+
+        if embed_features is None:
+            embed_features = w_dim
+        if c_dim == 0:
+            embed_features = 0
+        if layer_features is None:
+            layer_features = w_dim
+        features_list = [z_dim + embed_features] + [layer_features] * (num_layers - 1) + [w_dim]
+
+        if c_dim > 0:
+            self.embed = FullyConnectedLayer(c_dim, embed_features)
+        for idx in range(num_layers):
+            in_features = features_list[idx]
+            out_features = features_list[idx + 1]
+            layer = FullyConnectedLayer(in_features, out_features, activation=activation, lr_multiplier=lr_multiplier)
+            setattr(self, f'fc{idx}', layer)
+
+        if num_ws is not None and w_avg_beta is not None:
+            self.register_buffer('w_avg', torch.zeros([w_dim]))
+        
+        # Sequential upsampling layers.
+        for idx in range(0, len(block_resolutions)):
+            if idx == 0:
+                dimensions = block_resolutions[0]
+                in_channels = int(w_dim / (block_resolutions[0] * block_resolutions[0]))
+                out_channels = channels_dict[dimensions]
+                mod_channels = int(out_channels / 8)
+
+                layer = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=True, activation=activation, up=1)
+                setattr(self, f'conv{idx}', layer)
+                mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation='linear', up=1)
+                setattr(self, f'mod{idx}', mod_layer)
+            else:
+                dimensions = block_resolutions[idx]
+                in_channels = channels_dict[int(dimensions / 2)]
+                out_channels = channels_dict[dimensions]
+                mod_channels = int(out_channels / 8)
+
+                layer1 = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=True, activation=activation, up=2)
+                setattr(self, f'conv{2 * idx - 1}', layer1)
+                mod_layer1 = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation='linear', up=1)
+                setattr(self, f'mod{2 * idx - 1}', mod_layer1)
+                layer2 = Conv2dLayer(out_channels, out_channels, kernel_size=3, bias=True, activation=activation, up=1)
+                setattr(self, f'conv{2 * idx}', layer2)
+                mod_layer2 = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation='linear', up=1)
+                setattr(self, f'mod{2 * idx}', mod_layer2)
+
+    def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
+        # Embed, normalize, and concat inputs.
+        x = None
+        with torch.autograd.profiler.record_function('input'):
+            if self.z_dim > 0:
+                misc.assert_shape(z, [None, self.z_dim])
+                x = normalize_2nd_moment(z.to(torch.float32))
+            if self.c_dim > 0:
+                misc.assert_shape(c, [None, self.c_dim])
+                y = normalize_2nd_moment(self.embed(c.to(torch.float32)))
+                x = torch.cat([x, y], dim=1) if x is not None else y
+
+        # Main layers.
+        for idx in range(self.num_layers):
+            layer = getattr(self, f'fc{idx}')
+            x = layer(x)
+
+        # Update moving average of W.
+        if self.w_avg_beta is not None and self.training and not skip_w_avg_update:
+            with torch.autograd.profiler.record_function('update_w_avg'):
+                self.w_avg.copy_(x.detach().mean(dim=0).lerp(self.w_avg, self.w_avg_beta))
+
+        # Broadcast.
+        # if self.num_ws is not None:
+        #     with torch.autograd.profiler.record_function('broadcast'):
+        #         x = x.unsqueeze(1).repeat([1, self.num_ws, 1])
+
+        # Apply truncation.
+        if truncation_psi != 1:
+            with torch.autograd.profiler.record_function('truncate'):
+                assert self.w_avg_beta is not None
+                if self.num_ws is None or truncation_cutoff is None:
+                    x = self.w_avg.lerp(x, truncation_psi)
+                else:
+                    x[:, :truncation_cutoff] = self.w_avg.lerp(x[:, :truncation_cutoff], truncation_psi)
+
+        # Reshape for spatial dimension.
+        x = torch.reshape(x, (x.shape[0], int(self.w_dim / (self.block_resolutions[0] * self.block_resolutions[0])), self.block_resolutions[0], self.block_resolutions[0]))
+
+        # List for gathering modulation parameters.
+        out = []
+
+        # Sequential upsampling for spatial dimension.
+        for idx in range(0, (len(self.block_resolutions) * 2 - 1)):
+            layer = getattr(self, f'conv{idx}')
+            x = layer(x)
+            mod_layer = getattr(self, f'mod{idx}')
+            out.append(mod_layer(x))
+
+        return out
+
+#----------------------------------------------------------------------------
+
+@persistence.persistent_class
 class SynthesisLayer(torch.nn.Module):
     def __init__(self,
         in_channels,                    # Number of input channels.
@@ -330,6 +456,8 @@ class SynthesisBlock(torch.nn.Module):
     def __init__(self,
         in_channels,                        # Number of input channels, 0 = first block.
         out_channels,                       # Number of output channels.
+        z_dim,                              # Input latent (Z) dimensionality.
+        c_dim,                              # Conditioning label (C) dimensionality.
         w_dim,                              # Intermediate latent (W) dimensionality.
         resolution,                         # Resolution of this block.
         img_channels,                       # Number of output color channels.
@@ -344,6 +472,9 @@ class SynthesisBlock(torch.nn.Module):
         assert architecture in ['orig', 'skip', 'resnet']
         super().__init__()
         self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.z_dim = z_dim
+        self.c_dim = c_dim
         self.w_dim = w_dim
         self.resolution = resolution
         self.img_channels = img_channels
@@ -357,6 +488,11 @@ class SynthesisBlock(torch.nn.Module):
 
         if in_channels == 0:
             self.const = torch.nn.Parameter(torch.randn([out_channels, resolution, resolution]))
+            if c_dim > 0:
+                self.embed = FullyConnectedLayer(c_dim, out_channels)
+                self.z_embed = FullyConnectedLayer(z_dim, out_channels)
+                self.mixer_fc = FullyConnectedLayer(2 * out_channels, 2 * out_channels)
+                self.mixer_conv = Conv2dLayer(int((2 * out_channels) / (resolution * resolution)), out_channels, kernel_size=1, bias=True, activation='lrelu', up=1)
 
         if in_channels != 0:
             self.conv0 = SynthesisLayer(in_channels, out_channels, w_dim=w_dim, resolution=resolution, up=2,
@@ -376,7 +512,7 @@ class SynthesisBlock(torch.nn.Module):
             self.skip = Conv2dLayer(in_channels, out_channels, kernel_size=1, bias=False, up=2,
                 resample_filter=resample_filter, channels_last=self.channels_last)
 
-    def forward(self, x, img, ws, force_fp32=False, fused_modconv=None, **layer_kwargs):
+    def forward(self, z, c, x, img, ws, sp_ws1, sp_ws2, force_fp32=False, fused_modconv=None, **layer_kwargs):
         misc.assert_shape(ws, [None, self.num_conv + self.num_torgb, self.w_dim])
         w_iter = iter(ws.unbind(dim=1))
         dtype = torch.float16 if self.use_fp16 and not force_fp32 else torch.float32
@@ -387,6 +523,13 @@ class SynthesisBlock(torch.nn.Module):
 
         # Input.
         if self.in_channels == 0:
+            if self.c_dim > 0:
+                misc.assert_shape(c, [None, self.c_dim])
+                c = normalize_2nd_moment(self.embed(c.to(torch.float32)))
+                z = normalize_2nd_moment(self.z_embed(z.to(torch.float32)))
+                x = normalize_2nd_moment(self.mixer_fc(torch.cat((c, z), dim=1)))
+                x = torch.reshape(x, (x.shape[0], int(x.shape[1] / (self.resolution * self.resolution)), self.resolution, self.resolution))
+                x = self.mixer_conv(x)
             x = self.const.to(dtype=dtype, memory_format=memory_format)
             x = x.unsqueeze(0).repeat([ws.shape[0], 1, 1, 1])
         else:
@@ -396,6 +539,8 @@ class SynthesisBlock(torch.nn.Module):
         # Main layers.
         if self.in_channels == 0:
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
+            x = x / torch.std(x, dim=1, keepdim=True)
+            x = x * (1 + sp_ws1.repeat(1, 8, 1, 1))
         elif self.architecture == 'resnet':
             y = self.skip(x, gain=np.sqrt(0.5))
             x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
@@ -403,7 +548,11 @@ class SynthesisBlock(torch.nn.Module):
             x = y.add_(x)
         else:
             x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
+            x = x / torch.std(x, dim=1, keepdim=True)
+            x = x * (1 + sp_ws1.repeat(1, 8, 1, 1))
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
+            x = x / torch.std(x, dim=1, keepdim=True)
+            x = x * (1 + sp_ws2.repeat(1, 8, 1, 1))
 
         # ToRGB.
         if img is not None:
@@ -423,6 +572,8 @@ class SynthesisBlock(torch.nn.Module):
 @persistence.persistent_class
 class SynthesisNetwork(torch.nn.Module):
     def __init__(self,
+        z_dim,                      # Input latent (Z) dimensionality.
+        c_dim,                      # Conditioning label (C) dimensionality.
         w_dim,                      # Intermediate latent (W) dimensionality.
         img_resolution,             # Output image resolution.
         img_channels,               # Number of color channels.
@@ -433,6 +584,8 @@ class SynthesisNetwork(torch.nn.Module):
     ):
         assert img_resolution >= 4 and img_resolution & (img_resolution - 1) == 0
         super().__init__()
+        self.z_dim = z_dim
+        self.c_dim = c_dim
         self.w_dim = w_dim
         self.img_resolution = img_resolution
         self.img_resolution_log2 = int(np.log2(img_resolution))
@@ -447,14 +600,14 @@ class SynthesisNetwork(torch.nn.Module):
             out_channels = channels_dict[res]
             use_fp16 = (res >= fp16_resolution)
             is_last = (res == self.img_resolution)
-            block = SynthesisBlock(in_channels, out_channels, w_dim=w_dim, resolution=res,
+            block = SynthesisBlock(in_channels, out_channels, z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, resolution=res,
                 img_channels=img_channels, is_last=is_last, use_fp16=use_fp16, **block_kwargs)
             self.num_ws += block.num_conv
             if is_last:
                 self.num_ws += block.num_torgb
             setattr(self, f'b{res}', block)
 
-    def forward(self, ws, **block_kwargs):
+    def forward(self, z, c, ws, sp_ws, **block_kwargs):
         block_ws = []
         with torch.autograd.profiler.record_function('split_ws'):
             misc.assert_shape(ws, [None, self.num_ws, self.w_dim])
@@ -466,9 +619,12 @@ class SynthesisNetwork(torch.nn.Module):
                 w_idx += block.num_conv
 
         x = img = None
-        for res, cur_ws in zip(self.block_resolutions, block_ws):
+        for idx, (res, cur_ws) in enumerate(zip(self.block_resolutions, block_ws)):
             block = getattr(self, f'b{res}')
-            x, img = block(x, img, cur_ws, **block_kwargs)
+            if idx == 0:
+                x, img = block(z, c, x, img, cur_ws, sp_ws[0], None, **block_kwargs)
+            else:
+                x, img = block(None, c, x, img, cur_ws, sp_ws[2 * idx - 1], sp_ws[2 * idx], **block_kwargs)
         return img
 
 #----------------------------------------------------------------------------
@@ -490,13 +646,18 @@ class Generator(torch.nn.Module):
         self.w_dim = w_dim
         self.img_resolution = img_resolution
         self.img_channels = img_channels
-        self.synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=img_resolution, img_channels=img_channels, **synthesis_kwargs)
+        self.synthesis = SynthesisNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, img_resolution=img_resolution, img_channels=img_channels, **synthesis_kwargs)
         self.num_ws = self.synthesis.num_ws
         self.mapping = MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
+        self.block_resolutions = self.synthesis.block_resolutions
+        self.channel_base = synthesis_kwargs.channel_base
+        self.channel_max = synthesis_kwargs.channel_max
+        self.spatial = SpatialModulationNetwork(channel_base=self.channel_base, channel_max=self.channel_max, z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, block_resolutions=self.block_resolutions, **mapping_kwargs)
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
         ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
-        img = self.synthesis(ws, **synthesis_kwargs)
+        sp_ws = self.spatial(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
+        img = self.synthesis(z, c, ws, sp_ws, **synthesis_kwargs)
         return img
 
 #----------------------------------------------------------------------------

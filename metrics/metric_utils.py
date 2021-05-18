@@ -16,6 +16,8 @@ import numpy as np
 import torch
 import dnnlib
 
+from torch.utils.data import Subset
+
 #----------------------------------------------------------------------------
 
 class MetricOptions:
@@ -177,8 +179,9 @@ class ProgressMonitor:
 
 #----------------------------------------------------------------------------
 
-def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
+def compute_feature_stats_for_dataset(label, opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
     dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
+
     if data_loader_kwargs is None:
         data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
 
@@ -202,6 +205,13 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
         if flag:
             return FeatureStats.load(cache_file)
 
+    # If intraFID, make subset of dataset.
+    if label != None:
+        # select the indices of all other folders
+        idx = [i for i in range(len(dataset)) if np.argmax(dataset[i][1]) == label]
+        # build the appropriate subset
+        dataset = Subset(dataset, idx)
+
     # Initialize.
     num_items = len(dataset)
     if max_items is not None:
@@ -213,6 +223,7 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
     # Main loop.
     item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((num_items - 1) // opts.num_gpus + 1)]
     for images, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
+        print(_labels)
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
         features = detector(images.to(opts.device), **detector_kwargs)
@@ -229,7 +240,7 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
 
 #----------------------------------------------------------------------------
 
-def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=None, jit=False, **stats_kwargs):
+def compute_feature_stats_for_generator(label, opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=None, jit=False, **stats_kwargs):
     if batch_gen is None:
         batch_gen = min(batch_size, 4)
     assert batch_size % batch_gen == 0
