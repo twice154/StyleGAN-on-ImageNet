@@ -30,3 +30,8 @@ python train.py --outdir=./training-runs --data=/SSD/Multi-class-StyleGAN/LSUNCA
 python multi_class_label_maker.py  (/SSD/Multi-class-StyleGAN/ImageNet-10K)
 python dataset_tool.py --source=/SSD/Multi-class-StyleGAN/ImageNet-10K --dest=/SSD/Multi-class-StyleGAN/ImageNet-10K-128x128 --transform=center-crop --width=128 --height=128
 python train.py --outdir=./training-runs --data=/SSD/Multi-class-StyleGAN/ImageNet-10K-128x128 --gpus=4 --cfg=auto --aug=ada --metrics=fid5k_intra10 --kimg=5000 --cond=True --fp32=True
+
+2021.05.26 on ImageNet-10K-128x128
+python multi_class_label_maker.py  (/SSD/Multi-class-StyleGAN/ImageNet-10K)
+python dataset_tool.py --source=/SSD/Multi-class-StyleGAN/ImageNet-10K --dest=/SSD/Multi-class-StyleGAN/ImageNet-10K-128x128 --transform=center-crop --width=128 --height=128
+python train.py --outdir=./training-runs --data=/SSD/Multi-class-StyleGAN/ImageNet-10K-128x128 --gpus=4 --cfg=auto --aug=ada --metrics=fid5k_intra10 --kimg=5000 --cond=True --fp32=True --batch=32

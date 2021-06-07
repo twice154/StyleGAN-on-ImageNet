@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -306,28 +306,8 @@ class SpatialModulationNetwork(torch.nn.Module):
 
                 layer = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=True, activation=activation, up=1)
                 setattr(self, f'conv{idx}', layer)
-                voxelwise_a_mod_layer = torch.nn.Sequential(
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'voxelwise_a_mod{idx}', voxelwise_a_mod_layer)
-                voxelwise_b_mod_layer = torch.nn.Sequential(
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'voxelwise_b_mod{idx}', voxelwise_b_mod_layer)
-                global_a_mod_layer = torch.nn.Sequential(
-                    torch.nn.AvgPool2d(dimensions),
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'global_a_mod{idx}', global_a_mod_layer)
-                global_b_mod_layer = torch.nn.Sequential(
-                    torch.nn.AvgPool2d(dimensions),
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'global_b_mod{idx}', global_b_mod_layer)
+                mod_layer = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation='linear', up=1)
+                setattr(self, f'mod{idx}', mod_layer)
             else:
                 dimensions = block_resolutions[idx]
                 in_channels = channels_dict[int(dimensions / 2)]
@@ -336,52 +316,12 @@ class SpatialModulationNetwork(torch.nn.Module):
 
                 layer1 = Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=True, activation=activation, up=2)
                 setattr(self, f'conv{2 * idx - 1}', layer1)
-                voxelwise_a_mod_layer1 = torch.nn.Sequential(
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'voxelwise_a_mod{2 * idx - 1}', voxelwise_a_mod_layer1)
-                voxelwise_b_mod_layer1 = torch.nn.Sequential(
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'voxelwise_b_mod{2 * idx - 1}', voxelwise_b_mod_layer1)
-                global_a_mod_layer1 = torch.nn.Sequential(
-                    torch.nn.AvgPool2d(dimensions),
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'global_a_mod{2 * idx -1}', global_a_mod_layer1)
-                global_b_mod_layer1 = torch.nn.Sequential(
-                    torch.nn.AvgPool2d(dimensions),
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'global_b_mod{2 * idx -1}', global_b_mod_layer1)
+                mod_layer1 = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation='linear', up=1)
+                setattr(self, f'mod{2 * idx - 1}', mod_layer1)
                 layer2 = Conv2dLayer(out_channels, out_channels, kernel_size=3, bias=True, activation=activation, up=1)
                 setattr(self, f'conv{2 * idx}', layer2)
-                voxelwise_a_mod_layer2 = torch.nn.Sequential(
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'voxelwise_a_mod{2 * idx}', voxelwise_a_mod_layer2)
-                voxelwise_b_mod_layer2 = torch.nn.Sequential(
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=3, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'voxelwise_b_mod{2 * idx}', voxelwise_b_mod_layer2)
-                global_a_mod_layer2 = torch.nn.Sequential(
-                    torch.nn.AvgPool2d(dimensions),
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'global_a_mod{2 * idx}', global_a_mod_layer2)
-                global_b_mod_layer2 = torch.nn.Sequential(
-                    torch.nn.AvgPool2d(dimensions),
-                    Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                    Conv2dLayer(mod_channels, mod_channels, kernel_size=1, bias=True, activation=activation, up=1),
-                )
-                setattr(self, f'global_b_mod{2 * idx}', global_b_mod_layer2)
+                mod_layer2 = Conv2dLayer(out_channels, mod_channels, kernel_size=1, bias=True, activation='linear', up=1)
+                setattr(self, f'mod{2 * idx}', mod_layer2)
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
         # Embed, normalize, and concat inputs.
@@ -429,16 +369,10 @@ class SpatialModulationNetwork(torch.nn.Module):
         for idx in range(0, (len(self.block_resolutions) * 2 - 1)):
             layer = getattr(self, f'conv{idx}')
             x = layer(x)
-            global_a_mod_layer = getattr(self, f'global_a_mod{idx}')
-            out.append(global_a_mod_layer(x))
-            global_b_mod_layer = getattr(self, f'global_b_mod{idx}')
-            out.append(global_b_mod_layer(x))
-            voxelwise_a_mod_layer = getattr(self, f'voxelwise_a_mod{idx}')
-            out.append(voxelwise_a_mod_layer(x))
-            voxelwise_b_mod_layer = getattr(self, f'voxelwise_b_mod{idx}')
-            out.append(voxelwise_b_mod_layer(x))
+            mod_layer = getattr(self, f'mod{idx}')
+            out.append(mod_layer(x))
 
-        return out # [global_a, global_b, voxelwise_a, voxelwise_b]
+        return out
 
 #----------------------------------------------------------------------------
 
@@ -605,12 +539,8 @@ class SynthesisBlock(torch.nn.Module):
         # Main layers.
         if self.in_channels == 0:
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            # Most coarse modulation.
-            x = (x - torch.mean(x, dim=(2, 3), keepdim=True)) / torch.std(x, dim=(2, 3), keepdim=True)
-            x = (x * (1 + sp_ws1[0].repeat(1, 1, x.shape[2], x.shape[3]))) + sp_ws1[1].repeat(1, 1, x.shape[2], x.shape[3])
-            # Most fine modulation.
-            x = (x - torch.mean(x, dim=(1, 2, 3), keepdim=True)) / torch.std(x, dim=(1, 2, 3), keepdim=True)
-            x = (x * (1 + sp_ws1[2])) + sp_ws1[3]
+            x = x / torch.std(x, dim=(1, 2, 3), keepdim=True)
+            x = x * (1 + sp_ws1)
         elif self.architecture == 'resnet':
             y = self.skip(x, gain=np.sqrt(0.5))
             x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
@@ -618,20 +548,11 @@ class SynthesisBlock(torch.nn.Module):
             x = y.add_(x)
         else:
             x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            # Most coarse modulation.
-            x = (x - torch.mean(x, dim=(2, 3), keepdim=True)) / torch.std(x, dim=(2, 3), keepdim=True)
-            x = (x * (1 + sp_ws1[0].repeat(1, 1, x.shape[2], x.shape[3]))) + sp_ws1[1].repeat(1, 1, x.shape[2], x.shape[3])
-            # Most fine modulation.
-            x = (x - torch.mean(x, dim=(1, 2, 3), keepdim=True)) / torch.std(x, dim=(1, 2, 3), keepdim=True)
-            x = (x * (1 + sp_ws1[2])) + sp_ws1[3]
-
+            x = x / torch.std(x, dim=(1, 2, 3), keepdim=True)
+            x = x * (1 + sp_ws1)
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            # Most coarse modulation.
-            x = (x - torch.mean(x, dim=(2, 3), keepdim=True)) / torch.std(x, dim=(2, 3), keepdim=True)
-            x = (x * (1 + sp_ws2[0].repeat(1, 1, x.shape[2], x.shape[3]))) + sp_ws2[1].repeat(1, 1, x.shape[2], x.shape[3])
-            # Most fine modulation.
-            x = (x - torch.mean(x, dim=(1, 2, 3), keepdim=True)) / torch.std(x, dim=(1, 2, 3), keepdim=True)
-            x = (x * (1 + sp_ws2[2])) + sp_ws2[3]
+            x = x / torch.std(x, dim=(1, 2, 3), keepdim=True)
+            x = x * (1 + sp_ws2)
 
         # ToRGB.
         if img is not None:
@@ -701,9 +622,9 @@ class SynthesisNetwork(torch.nn.Module):
         for idx, (res, cur_ws) in enumerate(zip(self.block_resolutions, block_ws)):
             block = getattr(self, f'b{res}')
             if idx == 0:
-                x, img = block(z, c, x, img, cur_ws, [sp_ws[0], sp_ws[1], sp_ws[2], sp_ws[3]], None, **block_kwargs)
+                x, img = block(z, c, x, img, cur_ws, sp_ws[0], None, **block_kwargs)
             else:
-                x, img = block(None, c, x, img, cur_ws, [sp_ws[8 * idx - 4], sp_ws[8 * idx - 3], sp_ws[8 * idx - 2], sp_ws[8 * idx - 1]], [sp_ws[8 * idx], sp_ws[8 * idx + 1], sp_ws[8 * idx + 2], sp_ws[8 * idx + 3]], **block_kwargs)
+                x, img = block(None, c, x, img, cur_ws, sp_ws[2 * idx - 1], sp_ws[2 * idx], **block_kwargs)
         return img
 
 #----------------------------------------------------------------------------
