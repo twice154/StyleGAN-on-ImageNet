@@ -1,4 +1,4 @@
-## StyleGAN-on-ImageNet
+# StyleGAN-on-ImageNet
 
 This repository contains project code of stylegan-on-imagenet.
 
