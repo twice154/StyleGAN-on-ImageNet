@@ -1,3 +1,41 @@
+## StyleGAN-on-ImageNet
+
+## Requirements, Data Preparation
+
+This repository starts from <a href="https://github.com/NVlabs/stylegan2-ada-pytorch">StyleGAN-ADA Official PyTorch Source Code</a>.  
+I just modify neural network architecture, so requirements and data preparation is exactly same.
+
+## Training
+
+## Testing
+
+## Results on ImageNet-10-128x128
+
+## License
+
+Copyright &copy; 2021, NVIDIA Corporation. All rights reserved.
+
+This work is made available under the [Nvidia Source Code License](https://nvlabs.github.io/stylegan2-ada-pytorch/license.html).
+
+## Citation
+
+```
+@inproceedings{Karras2020ada,
+  title     = {Training Generative Adversarial Networks with Limited Data},
+  author    = {Tero Karras and Miika Aittala and Janne Hellsten and Samuli Laine and Jaakko Lehtinen and Timo Aila},
+  booktitle = {Proc. NeurIPS},
+  year      = {2020}
+}
+```
+
+
+
+
+
+
+
+
+
 ## StyleGAN2-ADA &mdash; Official PyTorch implementation
 
 ![Teaser image](./docs/stylegan2-ada-teaser-1024x252.png)
