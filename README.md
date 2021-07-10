@@ -6,7 +6,7 @@ This repository contains project code of stylegan-on-imagenet.
 * Allow StyleGAN training on ImageNet by adding spatial self-modulation. (Vanilla StyleGAN already works well on CIFAR.)
 
 #### Below is the architecture diagram that I implemented.
-![img](img_supernet.png)
+![img](img_arch.png)
 
 ## Requirements
 
@@ -27,9 +27,6 @@ python train.py --outdir=./training-runs --data=/path/to/ImageNet-10-128x128 --g
 
 ## Results on ImageNet-10-128x128
 
-**[Notice!!]**  
-Computation issue, I just experimented on imagenet-10, but the significant gain can generate iamagenet.
-
 </ul>
 <table>
 <thead>
@@ -46,6 +43,11 @@ Computation issue, I just experimented on imagenet-10, but the significant gain 
 <td align="center">100</td>
 </tr>
 </tbody></table>
+
+**[Notice!!]**  
+Due to computation resources, I experiment on imagenet-10 only.  
+However, the significant gain above the table implies this method could work on imagenet-scale.  
+If anyone has experimented on imagenet, I would really appreciate if you contact me.
 
 ## License
 
