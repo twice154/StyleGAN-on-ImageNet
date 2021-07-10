@@ -5,7 +5,7 @@ This repository contains project code of stylegan-on-imagenet.
 **Contribution** of this proejct is
 * Allow StyleGAN training on ImageNet by adding spatial self-modulation. (Vanilla StyleGAN already works well on CIFAR.)
 
-#### Below is the architecture diagram that I implemented.
+#### Below is the architecture diagram.
 ![img](img_arch.png)
 
 ## Requirements
