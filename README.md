@@ -44,6 +44,8 @@ python train.py --outdir=./training-runs --data=/path/to/ImageNet-10-128x128 --g
 </tr>
 </tbody></table>
 
+
+
 **[Notice!!]**  
 Due to computation resources, I experiment on imagenet-10 only. However, the significant gain above the table implies this method could work on imagenet-scale. If anyone has experimented on imagenet, I would really appreciate if you contact me.
 
